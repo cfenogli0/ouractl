@@ -92,8 +92,17 @@ is `daily_sleep`, `sleep`, `daily_readiness`, `daily_activity`. Enable more unde
     enabled = ["daily_sleep", "sleep", "daily_readiness", "daily_activity"]
     overlap_days = 3
 
+## Claude Code skill
+
+The binary embeds a Claude Code skill (export-then-read pattern) so you can ask
+about your Oura data conversationally without an MCP server. Install it:
+
+    octl skill install        # writes ~/.claude/skills/octl/SKILL.md
+
+Then restart Claude Code. Re-run after upgrading the binary (`--force`) to keep
+the skill in sync.
+
 ## Scope
 
-Ships the CLI, both auth modes (PAT and OAuth2), and a Claude Code skill
-(`skills/octl/`) so you can query the data conversationally without an MCP
-server. The MCP server and the intraday heart-rate dataset are fast-follow.
+Ships the CLI, both auth modes (PAT and OAuth2), and an installable Claude Code
+skill. The MCP server and the intraday heart-rate dataset are fast-follow.
