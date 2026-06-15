@@ -46,6 +46,34 @@ func TestFileStoreLoadMissingIsErrNoTokens(t *testing.T) {
 	}
 }
 
+func TestNewTokenStoreSelection(t *testing.T) {
+	// file backend needs an encryption key
+	if _, err := NewTokenStore("file", "/tmp/x.enc", ""); err == nil {
+		t.Fatal("file backend without encryption key must error")
+	}
+	s, err := NewTokenStore("file", "/tmp/x.enc", "k")
+	if err != nil {
+		t.Fatalf("file backend: %v", err)
+	}
+	if _, ok := s.(*FileStore); !ok {
+		t.Fatalf("want *FileStore, got %T", s)
+	}
+	// empty backend defaults to file
+	if _, err := NewTokenStore("", "/tmp/x.enc", "k"); err != nil {
+		t.Fatalf("empty backend should default to file: %v", err)
+	}
+	s, err = NewTokenStore("keychain", "", "")
+	if err != nil {
+		t.Fatalf("keychain backend: %v", err)
+	}
+	if _, ok := s.(*KeychainStore); !ok {
+		t.Fatalf("want *KeychainStore, got %T", s)
+	}
+	if _, err := NewTokenStore("bogus", "", ""); err == nil {
+		t.Fatal("unknown backend must error")
+	}
+}
+
 func contains(b []byte, sub string) bool {
 	return len(b) >= len(sub) && (string(b) == sub || indexOf(string(b), sub) >= 0)
 }

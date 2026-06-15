@@ -68,3 +68,20 @@ func (s *FileStore) Save(t Tokens) error {
 	return nil
 }
 
+// NewTokenStore builds the configured backend. The file backend requires an
+// encryption key (encrypting with a key that sits beside the ciphertext is
+// pointless, so the key must come from env / a secrets manager).
+func NewTokenStore(backend, filePath, encKey string) (TokenStore, error) {
+	switch backend {
+	case "", "file":
+		if encKey == "" {
+			return nil, fmt.Errorf("file token backend requires an encryption key (set OURA_ENCRYPTION_KEY) or use --token-backend keychain")
+		}
+		return NewFileStore(filePath, DeriveKey(encKey)), nil
+	case "keychain":
+		return NewKeychainStore("octl"), nil
+	default:
+		return nil, fmt.Errorf("unknown token_backend %q (want file or keychain)", backend)
+	}
+}
+
