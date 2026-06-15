@@ -5,7 +5,7 @@
 - **Author:** Calib (with Claude)
 - **Type:** Design / explanation. One job: capture the architecture and the decisions behind it so implementation can proceed from a single source.
 
-> Working name: `oura` (binary), module `github.com/cfenogli0/oura`. The repo slug is not final; pick before public release.
+> Binary: `octl`. Repo and module: `github.com/cfenogli0/ouractl`. (`octl` is the invoked command, parallel to `kubectl`/`doctl`; `ouractl` is the project slug.)
 
 ---
 
@@ -28,7 +28,7 @@ The existing Python sync also carries a latent bug worth not reproducing: it rea
 
 ## Non-goals
 
-- No built-in scheduler daemon in v1. The OS scheduler (cron, launchd, systemd timer) invokes `oura sync`.
+- No built-in scheduler daemon in v1. The OS scheduler (cron, launchd, systemd timer) invokes `octl sync`.
 - No web-auth session capture. Oura exposes no supported hook; scraping would be fragile for little gain.
 - No `pkg/` public Go library in v1. The binary is the product. A client library can be promoted later, deliberately.
 - No vault coupling in the OSS tool. Vault wiring stays in the user's own layer.
@@ -40,7 +40,7 @@ The existing Python sync also carries a latent bug worth not reproducing: it rea
 | Language | Go | TypeScript: native MCP ecosystem but needs a runtime at deploy, weakening the single-binary story that is the differentiator. Go + TS split: two artifacts to maintain for one product. |
 | Storage | SQLite source of truth, with export commands | JSON files only: weak backfill dedup, history is a rewrite-the-blob file, no real query. SQLite + JSON mirror: two stores to keep in sync for marginal readability gain. |
 | Data selection | Endpoint opt-in at collection; field selection at read | Field selection at collection time poisons the stored history, so changing your mind forces a re-backfill from the API. Endpoint-only everywhere is too coarse for shaping MCP output. |
-| Project layout | `main.go` at root + `internal/` | `cmd/oura/`: only earns its keep with multiple binaries (we have one), and it makes `go install` path uglier. `golang-standards/project-layout`: not an official standard; cargo-culting its full tree adds empty ceremony. |
+| Project layout | `main.go` at root + `internal/` | `cmd/octl/`: only earns its keep with multiple binaries (we have one), and it makes `go install` path uglier. `golang-standards/project-layout`: not an official standard; cargo-culting its full tree adds empty ceremony. |
 | Invocation | On-demand CLI in v1; MCP is the only long-running mode, in v2 | Built-in daemon: adds supervision and lifecycle surface the OS schedulers already solve better. |
 | Auth default | Personal access token via `OURA_TOKEN` | OAuth2-only (the current Python approach): forces app registration and a refresh flow on every user, including single-owner deploys that do not need it. OAuth2 stays available as the second mode. |
 | SQLite driver | Pure-Go (`modernc.org/sqlite`) | cgo driver (`mattn/go-sqlite3`): faster but breaks the static-binary, cross-compile-clean promise. |
@@ -67,13 +67,13 @@ The `datasets` registry is the keystone. Adding a dataset is one registry entry,
 
 | Command | Job |
 |---|---|
-| `oura auth` | Set up and verify credentials. PAT: validate against `personal_info`. OAuth2: run the localhost-callback flow, store the refresh token, report the live mode. |
-| `oura sync` | Incremental pull of enabled datasets since each dataset watermark, minus an overlap window. The cron target. |
-| `oura backfill --from D --to D` (or `--days N`) | Idempotent historical pull over a range. Safe to re-run. |
-| `oura export --dataset D --from D --to D --format json\|csv\|ndjson [--fields ...]` | Read out of SQLite. Field projection lives here. |
-| `oura status` | Auth state, per-dataset last sync, row counts, daily rate-limit budget used. |
-| `oura config` | Print the effective merged config and validate it. |
-| `oura mcp` | (v2) Serve MCP over the same store. |
+| `octl auth` | Set up and verify credentials. PAT: validate against `personal_info`. OAuth2: run the localhost-callback flow, store the refresh token, report the live mode. |
+| `octl sync` | Incremental pull of enabled datasets since each dataset watermark, minus an overlap window. The cron target. |
+| `octl backfill --from D --to D` (or `--days N`) | Idempotent historical pull over a range. Safe to re-run. |
+| `octl export --dataset D --from D --to D --format json\|csv\|ndjson [--fields ... \| --all]` | Read out of SQLite. Field projection lives here. |
+| `octl status` | Auth state, per-dataset last sync, row counts, daily rate-limit budget used. |
+| `octl config` | Print the effective merged config and validate it. |
+| `octl mcp` | (v2) Serve MCP over the same store. |
 
 ### Data flow, one sync run
 
@@ -160,7 +160,7 @@ A `TokenProvider` interface yields a valid bearer per request.
 | Mode | Setup | Refresh | At rest |
 |---|---|---|---|
 | `token` (PAT, default) | `OURA_TOKEN` | none | not stored; already in env or file |
-| `oauth2` | `oura auth` runs a localhost-callback flow and opens the browser | auto on 401 or expiry | access + refresh encrypted with AES-256-GCM, key from `OURA_ENCRYPTION_KEY` |
+| `oauth2` | `octl auth` runs a localhost-callback flow and opens the browser | auto on 401 or expiry | access + refresh encrypted with AES-256-GCM, key from `OURA_ENCRYPTION_KEY` |
 
 Only OAuth2 persists a token (the refresh token), and only that is encrypted at rest. The PAT is not copied into storage; it already lives in env or the config file, so a stored duplicate would only widen exposure. Token files are written `0600`.
 
@@ -181,15 +181,17 @@ v1 default-enabled set: `daily_sleep`, `sleep`, `daily_readiness`, `daily_activi
 
 ## Export
 
-`export` reads from SQLite and writes one of three formats: `json` (array of records), `csv` (flattened, selected fields), `ndjson` (one record per line, for streaming into other tools). `--fields` projects via `json_extract`; `--from`/`--to` bound the range. Export never calls the API; it is a pure read over the store.
+`export` reads from SQLite and writes one of three formats: `json` (array of records), `csv` (selected fields, one column each), `ndjson` (one record per line, for streaming into other tools). `--fields` projects via `json_extract`; `--from`/`--to` bound the range. Export never calls the API; it is a pure read over the store.
+
+For `csv`, field selection is explicit by design: pass `--fields day,score,total_sleep_duration` for a stable, predictable column set, or `--all` to dump every leaf path the dataset carries. Omitting both is an error, not a silent everything-dump; the error message lists the dataset's available top-level fields so the user can choose. The rationale: Oura nests fields and adds them over time, so an implicit auto-flatten would silently change column sets between runs and mangle arrays (`hr_5min`). `json`/`ndjson` are unaffected; they always carry the full record.
 
 ## Claude Code skill (v1)
 
-Ships at `skills/oura/SKILL.md`. It teaches Claude Code to run `oura status`/`oura sync` to ensure freshness, then `oura export --dataset … --format json` and read the result to answer questions about trends. It is vault-agnostic: it describes the export-then-read pattern and leaves any vault write to the user's own layer. This skill is the concrete proof that conversational access does not require the MCP server.
+Ships at `skills/octl/SKILL.md`. It teaches Claude Code to run `octl status`/`octl sync` to ensure freshness, then `octl export --dataset … --format json` and read the result to answer questions about trends. It is vault-agnostic: it describes the export-then-read pattern and leaves any vault write to the user's own layer. This skill is the concrete proof that conversational access does not require the MCP server.
 
 ## MCP server (v2, designed-for not built)
 
-`internal/mcp/` will expose query tools (sleep, readiness, activity, workouts, range queries) over the same store, using the official Go MCP SDK (`modelcontextprotocol/go-sdk`). It reuses `store` and `export` projection; it adds no new persistence. Kept out of v1 to ship a tight, tested core first. The architecture reserves the package and the `oura mcp` command so adding it is additive.
+`internal/mcp/` will expose query tools (sleep, readiness, activity, workouts, range queries) over the same store, using the official Go MCP SDK (`modelcontextprotocol/go-sdk`). It reuses `store` and `export` projection; it adds no new persistence. Kept out of v1 to ship a tight, tested core first. The architecture reserves the package and the `octl mcp` command so adding it is additive.
 
 ## Testing
 
@@ -203,7 +205,7 @@ Per the project owner's bar: cover the paths whose failure is silent, irreversib
 - **Config precedence.** flags > env > file > default, including the `OURA_TOKEN` override.
 - **Dataset normalizers.** Golden fixtures per dataset assert the raw-to-normalized mapping. This is the test that would have caught the wrong-endpoint sleep-score bug in the Python sync.
 - **Rate-limit handling.** A 429 triggers backoff and retry; daily budget accounting does not exceed the cap.
-- **Export projection.** Field and date selection return exactly the requested shape.
+- **Export projection.** Field and date selection return exactly the requested shape, `--all` emits every leaf, and a csv call with neither `--fields` nor `--all` errors with the available-fields list rather than dumping.
 
 Infra: `httptest` Oura mock with sanitized real-payload fixtures; pure-Go SQLite runs store tests on a temp database with no external dependency. Not tested: cobra wiring, log formatting, trivial accessors.
 
@@ -220,7 +222,7 @@ In: core CLI (`auth`, `sync`, `backfill`, `export`, `status`, `config`), both au
 
 Out (fast-follow, separate plans): the MCP server, intraday heart-rate dataset, any scheduler/`--watch` mode, a published Go client library.
 
-## Open questions
+## Resolved questions
 
-- Final repo and binary name (`oura` is a working placeholder; consider collision and discoverability).
-- Whether `export --format csv` flattens nested JSON automatically or requires explicit `--fields`. Leaning explicit `--fields` for CSV to avoid surprising column sets.
+- **Repo and binary name.** Binary `octl`, repo/module `ouractl`. Resolved 2026-06-14.
+- **CSV field selection.** Explicit `--fields`, with `--all` for the full leaf dump; omitting both errors with the dataset's available-fields list. Resolved 2026-06-14.
