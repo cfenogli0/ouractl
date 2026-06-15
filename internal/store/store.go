@@ -136,6 +136,39 @@ func (s *Store) Watermark(dataset string) (string, error) {
 	return day.String, nil
 }
 
+// DatasetStat is one row of `octl status`.
+type DatasetStat struct {
+	Dataset       string
+	Rows          int
+	LastSyncedDay string
+	LastRunAt     string
+}
+
+// Stats returns per-dataset row counts joined with sync_state.
+func (s *Store) Stats() ([]DatasetStat, error) {
+	const q = `
+SELECT r.dataset, COUNT(*) AS rows,
+       COALESCE(ss.last_synced_day, ''), COALESCE(ss.last_run_at, '')
+FROM records r
+LEFT JOIN sync_state ss ON ss.dataset = r.dataset
+GROUP BY r.dataset
+ORDER BY r.dataset`
+	rows, err := s.db.Query(q)
+	if err != nil {
+		return nil, fmt.Errorf("stats: %w", err)
+	}
+	defer rows.Close()
+	var out []DatasetStat
+	for rows.Next() {
+		var st DatasetStat
+		if err := rows.Scan(&st.Dataset, &st.Rows, &st.LastSyncedDay, &st.LastRunAt); err != nil {
+			return nil, err
+		}
+		out = append(out, st)
+	}
+	return out, rows.Err()
+}
+
 // AdvanceWatermark moves last_synced_day forward to day if day is later than the
 // stored value (lexicographic compare works for YYYY-MM-DD). last_run_at is
 // always updated so status reflects the attempt.
