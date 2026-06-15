@@ -130,7 +130,7 @@ func RunBrowserFlow(ctx context.Context, cfg FlowConfig) (Tokens, error) {
 	if err != nil {
 		return Tokens{}, fmt.Errorf("listen on %s (is the port free?): %w", redirect.Host, err)
 	}
-	srv := &http.Server{Handler: mux}
+	srv := &http.Server{Handler: mux, ReadHeaderTimeout: 10 * time.Second}
 	go srv.Serve(ln)
 	defer srv.Close()
 

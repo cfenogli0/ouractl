@@ -70,7 +70,8 @@ func TestExchangeCodePostsAuthorizationCode(t *testing.T) {
 		t.Fatalf("tokens = %+v", tok)
 	}
 	if form.Get("grant_type") != "authorization_code" || form.Get("code") != "CODE" ||
-		form.Get("code_verifier") != "VERIFIER" || !strings.Contains(form.Get("redirect_uri"), "callback") {
+		form.Get("code_verifier") != "VERIFIER" || !strings.Contains(form.Get("redirect_uri"), "callback") ||
+		form.Get("client_id") != "cid" || form.Get("client_secret") != "sec" {
 		t.Fatalf("form = %v", form)
 	}
 }
