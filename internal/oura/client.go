@@ -104,6 +104,35 @@ func (c *Client) fetchPage(ctx context.Context, endpoint, start, end, next strin
 	return page, nil
 }
 
+// GetOne fetches a single-object endpoint (e.g. personal_info) and returns the
+// decoded body. Used by `auth` to validate a PAT.
+func (c *Client) GetOne(ctx context.Context, endpoint string) (map[string]any, error) {
+	req, err := http.NewRequestWithContext(ctx, http.MethodGet, c.baseURL+"/"+endpoint, nil)
+	if err != nil {
+		return nil, err
+	}
+	tok, err := c.tp.Token(ctx)
+	if err != nil {
+		return nil, err
+	}
+	req.Header.Set("Authorization", "Bearer "+tok)
+	resp, err := c.do(req)
+	if err != nil {
+		return nil, err
+	}
+	defer resp.Body.Close()
+	c.calls++
+	body, _ := io.ReadAll(resp.Body)
+	if resp.StatusCode != http.StatusOK {
+		return nil, fmt.Errorf("oura %s returned %d: %s", endpoint, resp.StatusCode, string(body))
+	}
+	var m map[string]any
+	if err := json.Unmarshal(body, &m); err != nil {
+		return nil, fmt.Errorf("decode %s: %w", endpoint, err)
+	}
+	return m, nil
+}
+
 func (c *Client) do(req *http.Request) (*http.Response, error) {
 	var lastErr error
 	for attempt := 0; attempt <= c.maxRetries; attempt++ {
