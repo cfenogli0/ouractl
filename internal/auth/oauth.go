@@ -26,7 +26,22 @@ type OAuthProvider struct {
 	persist   func(Tokens) error // optional: write refreshed tokens to disk
 }
 
-const expirySkew = 60 * time.Second
+const expirySkew = 5 * time.Minute
+
+// NewOAuthProvider loads tokens from the store and persists refreshed tokens
+// back to it. Returns ErrNoTokens (wrapped) if nothing is stored yet.
+func NewOAuthProvider(store TokenStore, refresher Refresher) (*OAuthProvider, error) {
+	t, err := store.Load()
+	if err != nil {
+		return nil, err
+	}
+	return &OAuthProvider{
+		tokens:    t,
+		refresher: refresher,
+		now:       time.Now,
+		persist:   store.Save,
+	}, nil
+}
 
 func (p *OAuthProvider) Token(ctx context.Context) (string, error) {
 	now := time.Now
