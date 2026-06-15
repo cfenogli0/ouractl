@@ -40,7 +40,7 @@ The existing Python sync also carries a latent bug worth not reproducing: it rea
 | Language | Go | TypeScript: native MCP ecosystem but needs a runtime at deploy, weakening the single-binary story that is the differentiator. Go + TS split: two artifacts to maintain for one product. |
 | Storage | SQLite source of truth, with export commands | JSON files only: weak backfill dedup, history is a rewrite-the-blob file, no real query. SQLite + JSON mirror: two stores to keep in sync for marginal readability gain. |
 | Data selection | Endpoint opt-in at collection; field selection at read | Field selection at collection time poisons the stored history, so changing your mind forces a re-backfill from the API. Endpoint-only everywhere is too coarse for shaping MCP output. |
-| Project layout | `main.go` at root + `internal/` | `cmd/octl/`: only earns its keep with multiple binaries (we have one), and it makes `go install` path uglier. `golang-standards/project-layout`: not an official standard; cargo-culting its full tree adds empty ceremony. |
+| Project layout | `cmd/octl/main.go` + `internal/` | Root `main.go`: would name the `go install` binary after the module (`ouractl`), not `octl`; `cmd/octl/` is what lets the repo stay `ouractl` while the installed command is `octl`. `golang-standards/project-layout` full tree: not an official standard; only the `cmd/`+`internal/` slice is warranted here. |
 | Invocation | On-demand CLI in v1; MCP is the only long-running mode, in v2 | Built-in daemon: adds supervision and lifecycle surface the OS schedulers already solve better. |
 | Auth default | Personal access token via `OURA_TOKEN` | OAuth2-only (the current Python approach): forces app registration and a refresh flow on every user, including single-owner deploys that do not need it. OAuth2 stays available as the second mode. |
 | SQLite driver | Pure-Go (`modernc.org/sqlite`) | cgo driver (`mattn/go-sqlite3`): faster but breaks the static-binary, cross-compile-clean promise. |
@@ -50,7 +50,7 @@ The existing Python sync also carries a latent bug worth not reproducing: it rea
 Single binary, cobra-based commands, isolated internal packages.
 
 ```
-main.go              package main, cobra root wiring
+cmd/octl/main.go     package main, cobra root wiring (installs as binary `octl`)
 internal/config/     load + merge (flags > env > file > default), validate
 internal/auth/       TokenProvider: PAT and OAuth2, encrypted token store
 internal/oura/       API client: endpoints, pagination, retry, rate-limit accounting
