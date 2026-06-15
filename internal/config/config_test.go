@@ -101,6 +101,24 @@ func TestResolveEmptyDoesNotClobber(t *testing.T) {
 	}
 }
 
+func TestTokenBackendAndScopeDefaultsAndOverride(t *testing.T) {
+	d := Defaults()
+	if d.Storage.TokenBackend != "file" {
+		t.Fatalf("default token_backend = %q, want file", d.Storage.TokenBackend)
+	}
+	if d.Auth.Scope == "" {
+		t.Fatal("default scope must be set")
+	}
+	got := Resolve(d, map[string]string{"OURA_TOKEN_BACKEND": "keychain"}, Overrides{})
+	if got.Storage.TokenBackend != "keychain" {
+		t.Fatalf("env override token_backend = %q, want keychain", got.Storage.TokenBackend)
+	}
+	got = Resolve(d, nil, Overrides{TokenBackend: "file"})
+	if got.Storage.TokenBackend != "file" {
+		t.Fatalf("flag override token_backend = %q, want file", got.Storage.TokenBackend)
+	}
+}
+
 func TestValidate(t *testing.T) {
 	ok := Defaults()
 	ok.Auth.Token = "t"
