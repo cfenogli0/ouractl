@@ -88,6 +88,19 @@ func TestResolvePrecedence(t *testing.T) {
 	}
 }
 
+// Guards the set() empty-skip rule: an unset (empty) higher-priority source must
+// not clobber a value supplied by a lower-priority source.
+func TestResolveEmptyDoesNotClobber(t *testing.T) {
+	base := Defaults()
+	base.Auth.Token = "from-file"
+
+	// env has the key absent and flags leaves Token empty: file value survives.
+	got := Resolve(base, map[string]string{}, Overrides{})
+	if got.Auth.Token != "from-file" {
+		t.Fatalf("token = %q, want from-file (empty env/flag must not clobber)", got.Auth.Token)
+	}
+}
+
 func TestValidate(t *testing.T) {
 	ok := Defaults()
 	ok.Auth.Token = "t"
@@ -102,5 +115,11 @@ func TestValidate(t *testing.T) {
 	oauthMissing.Auth.Mode = "oauth2"
 	if Validate(oauthMissing) == nil {
 		t.Fatal("oauth2 without client creds should fail validation")
+	}
+	negOverlap := Defaults()
+	negOverlap.Auth.Token = "t"
+	negOverlap.Collection.OverlapDays = -1
+	if Validate(negOverlap) == nil {
+		t.Fatal("negative overlap_days should fail validation")
 	}
 }
