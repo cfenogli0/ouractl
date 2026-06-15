@@ -3,6 +3,7 @@ package store
 import (
 	"database/sql"
 	"fmt"
+	"os"
 
 	_ "modernc.org/sqlite" // registers the pure-Go "sqlite" driver
 )
@@ -33,6 +34,13 @@ func Open(path string) (*Store, error) {
 	if err := s.migrate(); err != nil {
 		db.Close()
 		return nil, err
+	}
+	// The db holds normalized health data; keep it owner-only. migrate() has
+	// created the file by now via its first write. A ":memory:" path has no
+	// file, so tolerate a missing-file chmod error.
+	if err := os.Chmod(path, 0o600); err != nil && !os.IsNotExist(err) {
+		db.Close()
+		return nil, fmt.Errorf("secure db permissions %s: %w", path, err)
 	}
 	return s, nil
 }

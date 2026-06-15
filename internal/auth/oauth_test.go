@@ -2,12 +2,36 @@ package auth
 
 import (
 	"context"
+	"fmt"
 	"testing"
 	"time"
 )
 
 type fakeRefresher struct {
 	calls int
+}
+
+// errRefresher always fails, modeling a revoked or network-failed refresh.
+type errRefresher struct{}
+
+func (errRefresher) Refresh(context.Context, string) (Tokens, error) {
+	return Tokens{}, fmt.Errorf("refresh rejected")
+}
+
+// A failed refresh must surface as an error, never serve a stale or empty token.
+func TestOAuthRefreshFailureErrorsLoudly(t *testing.T) {
+	p := &OAuthProvider{
+		tokens:    Tokens{AccessToken: "stale", RefreshToken: "r0", Expiry: fixedNow().Add(-time.Minute)},
+		refresher: errRefresher{},
+		now:       fixedNow,
+	}
+	tok, err := p.Token(context.Background())
+	if err == nil {
+		t.Fatal("failed refresh must error, not serve a token")
+	}
+	if tok != "" {
+		t.Fatalf("on refresh failure token must be empty, got %q", tok)
+	}
 }
 
 func (f *fakeRefresher) Refresh(ctx context.Context, refreshToken string) (Tokens, error) {
