@@ -5,21 +5,22 @@ import (
 	"fmt"
 
 	"github.com/cfenogli0/ouractl/internal/auth"
+	"github.com/cfenogli0/ouractl/internal/config"
 	"github.com/cfenogli0/ouractl/internal/oura"
 	"github.com/cfenogli0/ouractl/internal/store"
 	syncpkg "github.com/cfenogli0/ouractl/internal/sync"
 	"github.com/spf13/cobra"
 )
 
-type configForClient struct {
-	mode, token string
-}
-
-func buildClient(c configForClient) (*oura.Client, error) {
-	if c.mode != "token" {
-		return nil, fmt.Errorf("only token auth is wired for sync in v1; run `octl auth` for status")
+func buildClient(c config.Config) (*oura.Client, error) {
+	switch c.Auth.Mode {
+	case "token":
+		return oura.New(auth.NewStaticProvider(c.Auth.Token), ouraBaseURL), nil
+	case "oauth2":
+		return oauthClient(c)
+	default:
+		return nil, fmt.Errorf("unknown auth mode %q", c.Auth.Mode)
 	}
-	return oura.New(auth.NewStaticProvider(c.token), ouraBaseURL), nil
 }
 
 func newSyncCmd(g *globalFlags) *cobra.Command {
@@ -38,7 +39,7 @@ func newSyncCmd(g *globalFlags) *cobra.Command {
 			if err != nil {
 				return err
 			}
-			client, err := buildClient(configForClient{c.Auth.Mode, c.Auth.Token})
+			client, err := buildClient(c)
 			if err != nil {
 				return err
 			}
@@ -91,7 +92,7 @@ func newBackfillCmd(g *globalFlags) *cobra.Command {
 			if err != nil {
 				return err
 			}
-			client, err := buildClient(configForClient{c.Auth.Mode, c.Auth.Token})
+			client, err := buildClient(c)
 			if err != nil {
 				return err
 			}
