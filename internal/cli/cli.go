@@ -68,6 +68,7 @@ func NewRootCmd(version string) *cobra.Command {
 		newSyncCmd(g),
 		newBackfillCmd(g),
 		newExportCmd(g),
+		newSkillCmd(),
 	)
 	return root
 }
