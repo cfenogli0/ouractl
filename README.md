@@ -22,9 +22,7 @@ Two modes. Personal access token (default):
     export OURA_TOKEN=...   # from https://cloud.ouraring.com/personal-access-tokens
     octl auth               # validates against personal_info
 
-OAuth2 client credentials resolve the same way but the interactive browser flow
-is a fast-follow; v1 runs on a personal access token. Every credential resolves
-flags > env > file, mixable per value:
+Every credential resolves flags > env > file, mixable per value:
 
 | Credential | Flag | Env | Config |
 |---|---|---|---|
@@ -36,6 +34,32 @@ flags > env > file, mixable per value:
 CLI-arg secrets appear in `ps aux` and shell history. Prefer env for long-lived
 deploys; use flags only for one-off or CI runs where the value comes from a
 masked variable.
+
+### OAuth2
+
+For your own ring a personal access token is simpler. Use OAuth2 when other
+people connect their rings. Oura uses the authorization-code grant, so the first
+run opens a browser for consent.
+
+1. Register an app at https://cloud.ouraring.com/oauth/applications. Set the
+   redirect URI to exactly `http://localhost:8182/callback` (the `octl auth`
+   default). Authorization fails at the consent step if this URI is not
+   whitelisted. Override with `--redirect-uri` only if you registered a different one.
+2. Provide `OURA_CLIENT_ID` and `OURA_CLIENT_SECRET`, then run:
+
+       octl auth --auth-mode oauth2
+
+   This opens the browser, catches the callback, and stores the refresh token in
+   the token backend (below). `sync`/`backfill` then refresh the access token
+   automatically (5-min buffer) and persist Oura's rotated refresh token back.
+
+The refresh token never lands in `config.toml`. Choose where it lives with
+`--token-backend` / `OURA_TOKEN_BACKEND` / `[storage] token_backend`:
+
+| Backend | Where | Notes |
+|---|---|---|
+| `file` (default) | `~/.local/share/oura/tokens.enc`, AES-256-GCM, 0600 | Requires `OURA_ENCRYPTION_KEY`; the key must come from env / secrets manager, not disk. Headless-friendly, the server-deploy path. |
+| `keychain` | OS keychain (macOS Keychain, Linux Secret Service) | No token file on disk. Desktop convenience; unavailable on a headless box with no secret service. |
 
 ## Use
 
@@ -70,6 +94,6 @@ is `daily_sleep`, `sleep`, `daily_readiness`, `daily_activity`. Enable more unde
 
 ## Scope
 
-v1 ships the CLI and a Claude Code skill (`skills/octl/`) so you can query the
-data conversationally without an MCP server. The MCP server, the OAuth2 browser
-flow, and the intraday heart-rate dataset are fast-follow.
+Ships the CLI, both auth modes (PAT and OAuth2), and a Claude Code skill
+(`skills/octl/`) so you can query the data conversationally without an MCP
+server. The MCP server and the intraday heart-rate dataset are fast-follow.
