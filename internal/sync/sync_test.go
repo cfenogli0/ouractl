@@ -54,11 +54,23 @@ func TestSyncStartsAtWatermarkMinusOverlap(t *testing.T) {
 	}
 }
 
+func TestRunRequiresNowAndEnd(t *testing.T) {
+	s := newStore(t)
+	ds, _ := datasets.Get("daily_sleep")
+	f := &fakeFetcher{}
+	if err := Run(context.Background(), s, f, []datasets.Dataset{ds}, Options{End: "2026-06-13"}); err == nil {
+		t.Fatal("empty Now must error to avoid malformed fetched_at")
+	}
+	if err := Run(context.Background(), s, f, []datasets.Dataset{ds}, Options{Now: "2026-06-13"}); err == nil {
+		t.Fatal("empty End must error")
+	}
+}
+
 func TestBackfillUsesExplicitRange(t *testing.T) {
 	s := newStore(t)
 	f := &fakeFetcher{recs: nil}
 	ds, _ := datasets.Get("daily_sleep")
-	opts := Options{Start: "2025-01-01", End: "2025-02-01", OverlapDays: 3, Source: "backfill"}
+	opts := Options{Start: "2025-01-01", End: "2025-02-01", Now: "2025-02-01", OverlapDays: 3, Source: "backfill"}
 	if err := Run(context.Background(), s, f, []datasets.Dataset{ds}, opts); err != nil {
 		t.Fatal(err)
 	}

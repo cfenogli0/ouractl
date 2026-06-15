@@ -25,6 +25,15 @@ type Options struct {
 }
 
 func Run(ctx context.Context, s *store.Store, f Fetcher, sets []datasets.Dataset, opts Options) error {
+	// Guard the silent-corruption path: an empty Now would write a malformed
+	// "T00:00:00Z" into every record's fetched_at. The CLI always sets it; this
+	// catches a misconfigured caller before it pollutes the store.
+	if opts.Now == "" {
+		return fmt.Errorf("sync: opts.Now (YYYY-MM-DD) is required")
+	}
+	if opts.End == "" {
+		return fmt.Errorf("sync: opts.End (YYYY-MM-DD) is required")
+	}
 	runAt := opts.Now + "T00:00:00Z"
 	for _, ds := range sets {
 		start, err := rangeStart(s, ds.Name, opts)
