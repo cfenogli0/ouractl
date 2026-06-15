@@ -55,3 +55,31 @@ func TestUpsertIsIdempotentAndUpdates(t *testing.T) {
 		t.Fatalf("payload = %s, want revised score 82", rows[0].Payload)
 	}
 }
+
+func TestWatermarkRoundTrip(t *testing.T) {
+	s := newTestStore(t)
+
+	day, err := s.Watermark("daily_sleep")
+	if err != nil {
+		t.Fatalf("Watermark on empty: %v", err)
+	}
+	if day != "" {
+		t.Fatalf("empty watermark = %q, want \"\"", day)
+	}
+
+	if err := s.AdvanceWatermark("daily_sleep", "2026-06-10", "2026-06-10T08:00:00Z"); err != nil {
+		t.Fatalf("AdvanceWatermark: %v", err)
+	}
+	day, _ = s.Watermark("daily_sleep")
+	if day != "2026-06-10" {
+		t.Fatalf("watermark = %q, want 2026-06-10", day)
+	}
+
+	if err := s.AdvanceWatermark("daily_sleep", "2026-06-05", "2026-06-11T08:00:00Z"); err != nil {
+		t.Fatalf("AdvanceWatermark older: %v", err)
+	}
+	day, _ = s.Watermark("daily_sleep")
+	if day != "2026-06-10" {
+		t.Fatalf("watermark regressed to %q, want 2026-06-10", day)
+	}
+}
