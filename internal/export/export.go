@@ -1,9 +1,13 @@
 package export
 
 import (
+	"encoding/csv"
 	"encoding/json"
 	"fmt"
 	"io"
+	"sort"
+	"strconv"
+	"strings"
 
 	"github.com/cfenogli0/ouractl/internal/store"
 )
@@ -64,8 +68,98 @@ func project(m map[string]any, fields []string) map[string]any {
 	return out
 }
 
-// writeCSV is implemented in Task 16; this temporary stub keeps the package
-// compiling until then.
 func writeCSV(w io.Writer, rows []map[string]any, opts Options) error {
-	return fmt.Errorf("csv not implemented yet")
+	var cols []string
+	switch {
+	case len(opts.Fields) > 0:
+		cols = opts.Fields
+	case opts.All:
+		cols = allLeafColumns(rows)
+	default:
+		return fmt.Errorf("csv requires --fields or --all; available top-level fields: %s",
+			strings.Join(topLevelFields(rows), ", "))
+	}
+
+	cw := csv.NewWriter(w)
+	if err := cw.Write(cols); err != nil {
+		return err
+	}
+	for _, m := range rows {
+		flat := flatten(m, "")
+		rec := make([]string, len(cols))
+		for i, c := range cols {
+			rec[i] = scalarString(flat[c])
+		}
+		if err := cw.Write(rec); err != nil {
+			return err
+		}
+	}
+	cw.Flush()
+	return cw.Error()
+}
+
+// flatten turns nested maps into dotted leaf paths: contributors.deep_sleep.
+// Arrays are emitted as their JSON encoding (kept whole, never spread to columns).
+func flatten(m map[string]any, prefix string) map[string]any {
+	out := map[string]any{}
+	for k, v := range m {
+		key := k
+		if prefix != "" {
+			key = prefix + "." + k
+		}
+		if child, ok := v.(map[string]any); ok {
+			for ck, cv := range flatten(child, key) {
+				out[ck] = cv
+			}
+			continue
+		}
+		out[key] = v
+	}
+	return out
+}
+
+func allLeafColumns(rows []map[string]any) []string {
+	seen := map[string]struct{}{}
+	for _, m := range rows {
+		for k := range flatten(m, "") {
+			seen[k] = struct{}{}
+		}
+	}
+	cols := make([]string, 0, len(seen))
+	for k := range seen {
+		cols = append(cols, k)
+	}
+	sort.Strings(cols)
+	return cols
+}
+
+func topLevelFields(rows []map[string]any) []string {
+	seen := map[string]struct{}{}
+	for _, m := range rows {
+		for k := range m {
+			seen[k] = struct{}{}
+		}
+	}
+	out := make([]string, 0, len(seen))
+	for k := range seen {
+		out = append(out, k)
+	}
+	sort.Strings(out)
+	return out
+}
+
+func scalarString(v any) string {
+	switch t := v.(type) {
+	case nil:
+		return ""
+	case string:
+		return t
+	case bool:
+		return strconv.FormatBool(t)
+	case float64:
+		return strconv.FormatFloat(t, 'f', -1, 64)
+	default:
+		b, _ := json.Marshal(t) // arrays/objects kept as JSON text
+		return string(b)
+	}
 }
