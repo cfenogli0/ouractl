@@ -104,7 +104,21 @@ func (c *Client) fetchPage(ctx context.Context, endpoint, start, end, next strin
 	return page, nil
 }
 
-// do is a seam for retry; Task 11 replaces its body. For now it is a plain call.
 func (c *Client) do(req *http.Request) (*http.Response, error) {
-	return c.http.Do(req)
+	var lastErr error
+	for attempt := 0; attempt <= c.maxRetries; attempt++ {
+		resp, err := c.http.Do(req)
+		if err != nil {
+			lastErr = err
+		} else if resp.StatusCode == http.StatusTooManyRequests || resp.StatusCode >= 500 {
+			resp.Body.Close()
+			lastErr = fmt.Errorf("oura transient status %d", resp.StatusCode)
+		} else {
+			return resp, nil
+		}
+		if attempt < c.maxRetries {
+			time.Sleep(c.baseDelay * time.Duration(1<<attempt)) // exponential backoff
+		}
+	}
+	return nil, fmt.Errorf("exhausted %d retries: %w", c.maxRetries, lastErr)
 }
