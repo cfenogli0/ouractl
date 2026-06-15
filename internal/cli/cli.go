@@ -3,8 +3,11 @@ package cli
 import (
 	"errors"
 	"fmt"
+	"os"
+	"path/filepath"
 	"time"
 
+	"github.com/BurntSushi/toml"
 	"github.com/cfenogli0/ouractl/internal/auth"
 	"github.com/cfenogli0/ouractl/internal/config"
 	"github.com/cfenogli0/ouractl/internal/datasets"
@@ -120,4 +123,58 @@ func oauthClient(c config.Config) (*oura.Client, error) {
 		return nil, err
 	}
 	return oura.New(prov, ouraBaseURL), nil
+}
+
+// persistAuthSettings writes the NON-SECRET auth settings that subsequent
+// commands need (mode, client_id, redirect_uri, scope, token_backend) into the
+// config file, so `octl auth` makes the chosen mode sticky. Secrets resolved
+// from env or flags (client_secret, encryption_key) are never written; secrets
+// already present in the file are preserved. Returns the path written.
+func (g *globalFlags) persistAuthSettings(c config.Config) (string, error) {
+	path := g.configPath
+	if path == "" {
+		p, err := config.DefaultConfigPath()
+		if err != nil {
+			return "", err
+		}
+		path = p
+	}
+	fileCfg, err := config.LoadFile(path) // file values only (+ defaults); preserves file secrets
+	if err != nil {
+		return "", err
+	}
+	fileCfg.Auth.Mode = c.Auth.Mode
+	fileCfg.Auth.ClientID = c.Auth.ClientID
+	fileCfg.Auth.RedirectURI = c.Auth.RedirectURI
+	fileCfg.Auth.Scope = c.Auth.Scope
+	fileCfg.Storage.TokenBackend = c.Storage.TokenBackend
+	if err := os.MkdirAll(filepath.Dir(path), 0o700); err != nil {
+		return "", fmt.Errorf("create config dir: %w", err)
+	}
+	f, err := os.OpenFile(path, os.O_CREATE|os.O_WRONLY|os.O_TRUNC, 0o600)
+	if err != nil {
+		return "", fmt.Errorf("open config for write: %w", err)
+	}
+	defer f.Close()
+	if err := toml.NewEncoder(f).Encode(fileCfg); err != nil {
+		return "", fmt.Errorf("write config: %w", err)
+	}
+	return path, nil
+}
+
+// guardReauth refuses to overwrite an existing token store that the current
+// credentials cannot read, unless force is set. The common cause is a rotated
+// OURA_ENCRYPTION_KEY: silently re-authing would orphan tokens that are still
+// valid under the original key. A missing store (first auth) or a readable store
+// (legitimate re-consent) is allowed.
+func guardReauth(store auth.TokenStore, force bool) error {
+	if force {
+		return nil
+	}
+	_, err := store.Load()
+	if err == nil || errors.Is(err, auth.ErrNoTokens) {
+		return nil
+	}
+	return fmt.Errorf("an existing token store could not be read with the current credentials (%w); "+
+		"if you rotated OURA_ENCRYPTION_KEY or switched backends, re-run `octl auth` with --force to overwrite and re-authorize", err)
 }
