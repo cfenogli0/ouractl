@@ -1,11 +1,14 @@
 package cli
 
 import (
+	"errors"
 	"fmt"
 	"time"
 
+	"github.com/cfenogli0/ouractl/internal/auth"
 	"github.com/cfenogli0/ouractl/internal/config"
 	"github.com/cfenogli0/ouractl/internal/datasets"
+	"github.com/cfenogli0/ouractl/internal/oura"
 	"github.com/spf13/cobra"
 )
 
@@ -24,6 +27,7 @@ func addGlobalFlags(cmd *cobra.Command, g *globalFlags) {
 	f.StringVar(&g.overrides.RedirectURI, "redirect-uri", "", "OAuth2 redirect URI")
 	f.StringVar(&g.overrides.EncryptionKey, "encryption-key", "", "token store encryption key")
 	f.StringVar(&g.overrides.StoragePath, "db", "", "SQLite database path")
+	f.StringVar(&g.overrides.TokenBackend, "token-backend", "", "oauth token store: file or keychain")
 }
 
 func (g *globalFlags) load() (config.Config, error) {
@@ -90,4 +94,30 @@ func enabledDatasets(names []string) ([]datasets.Dataset, error) {
 		out = append(out, d)
 	}
 	return out, nil
+}
+
+// buildTokenStore constructs the configured oauth TokenStore.
+func buildTokenStore(c config.Config) (auth.TokenStore, error) {
+	path, err := config.TokenStorePath()
+	if err != nil {
+		return nil, err
+	}
+	return auth.NewTokenStore(c.Storage.TokenBackend, path, c.Storage.EncryptionKey)
+}
+
+// oauthClient builds an Oura client backed by the stored OAuth tokens.
+func oauthClient(c config.Config) (*oura.Client, error) {
+	store, err := buildTokenStore(c)
+	if err != nil {
+		return nil, err
+	}
+	refresher := auth.NewOuraRefresher(auth.DefaultTokenURL, c.Auth.ClientID, c.Auth.ClientSecret)
+	prov, err := auth.NewOAuthProvider(store, refresher)
+	if err != nil {
+		if errors.Is(err, auth.ErrNoTokens) {
+			return nil, fmt.Errorf("no oauth tokens stored; run `octl auth` first")
+		}
+		return nil, err
+	}
+	return oura.New(prov, ouraBaseURL), nil
 }

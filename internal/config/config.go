@@ -24,11 +24,13 @@ type AuthConfig struct {
 	ClientID     string `toml:"client_id"`
 	ClientSecret string `toml:"client_secret"`
 	RedirectURI  string `toml:"redirect_uri"`
+	Scope        string `toml:"scope"`
 }
 
 type StorageConfig struct {
 	Path          string `toml:"path"`
 	EncryptionKey string `toml:"encryption_key"`
+	TokenBackend  string `toml:"token_backend"` // "file" (default) | "keychain"
 }
 
 type CollectionConfig struct {
@@ -45,7 +47,11 @@ type LoggingConfig struct {
 // from XDG so this function has no filesystem dependency (keeps it testable).
 func Defaults() Config {
 	return Config{
-		Auth: AuthConfig{Mode: "token"},
+		Auth: AuthConfig{
+			Mode:  "token",
+			Scope: "personal daily heartrate workout tag session spo2",
+		},
+		Storage: StorageConfig{TokenBackend: "file"},
 		Collection: CollectionConfig{
 			Enabled:     []string{"daily_sleep", "sleep", "daily_readiness", "daily_activity"},
 			OverlapDays: 3,
@@ -78,6 +84,7 @@ type Overrides struct {
 	RedirectURI   string
 	EncryptionKey string
 	StoragePath   string
+	TokenBackend  string
 }
 
 // Resolve applies env then flags on top of base (which already has file+default
@@ -99,6 +106,7 @@ func Resolve(base Config, env map[string]string, flags Overrides) Config {
 	set(&c.Auth.RedirectURI, env["OURA_REDIRECT_URI"], flags.RedirectURI)
 	set(&c.Storage.EncryptionKey, env["OURA_ENCRYPTION_KEY"], flags.EncryptionKey)
 	set(&c.Storage.Path, env["OURA_DB_PATH"], flags.StoragePath)
+	set(&c.Storage.TokenBackend, env["OURA_TOKEN_BACKEND"], flags.TokenBackend)
 	return c
 }
 
@@ -106,7 +114,7 @@ func Resolve(base Config, env map[string]string, flags Overrides) Config {
 func EnvMap() map[string]string {
 	keys := []string{
 		"OURA_AUTH_MODE", "OURA_TOKEN", "OURA_CLIENT_ID", "OURA_CLIENT_SECRET",
-		"OURA_REDIRECT_URI", "OURA_ENCRYPTION_KEY", "OURA_DB_PATH",
+		"OURA_REDIRECT_URI", "OURA_ENCRYPTION_KEY", "OURA_DB_PATH", "OURA_TOKEN_BACKEND",
 	}
 	m := make(map[string]string, len(keys))
 	for _, k := range keys {
@@ -132,6 +140,11 @@ func ResolvePaths(c *Config) error {
 // DefaultConfigPath is where the config file lives unless --config overrides it.
 func DefaultConfigPath() (string, error) {
 	return xdg.ConfigFile("oura/config.toml")
+}
+
+// TokenStorePath is where the encrypted OAuth token file lives (file backend).
+func TokenStorePath() (string, error) {
+	return xdg.DataFile("oura/tokens.enc")
 }
 
 // Validate checks the resolved config is internally consistent and runnable.

@@ -82,3 +82,44 @@ func TestOAuthValidTokenSkipsRefresh(t *testing.T) {
 		t.Fatalf("valid token should be served as-is without refresh; tok=%q calls=%d", tok, ref.calls)
 	}
 }
+
+// memStore is an in-memory TokenStore for provider tests.
+type memStore struct {
+	t      Tokens
+	loaded bool
+	saved  *Tokens
+}
+
+func (m *memStore) Load() (Tokens, error) {
+	if !m.loaded {
+		return Tokens{}, ErrNoTokens
+	}
+	return m.t, nil
+}
+func (m *memStore) Save(t Tokens) error { m.saved = &t; return nil }
+
+func TestNewOAuthProviderLoadsAndPersists(t *testing.T) {
+	// no tokens yet -> ErrNoTokens surfaces
+	empty := &memStore{}
+	if _, err := NewOAuthProvider(empty, &fakeRefresher{}); err == nil {
+		t.Fatal("provider with no stored tokens should error (run octl auth)")
+	}
+
+	// expired token -> Token() refreshes and persists the fresh set to the store
+	store := &memStore{loaded: true, t: Tokens{AccessToken: "stale", RefreshToken: "r0",
+		Expiry: time.Now().Add(-time.Hour)}}
+	p, err := NewOAuthProvider(store, &fakeRefresher{})
+	if err != nil {
+		t.Fatalf("NewOAuthProvider: %v", err)
+	}
+	tok, err := p.Token(context.Background())
+	if err != nil {
+		t.Fatalf("Token: %v", err)
+	}
+	if tok != "fresh-access" {
+		t.Fatalf("token = %q, want fresh-access", tok)
+	}
+	if store.saved == nil || store.saved.AccessToken != "fresh-access" {
+		t.Fatalf("refreshed tokens not persisted to store: %+v", store.saved)
+	}
+}

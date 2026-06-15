@@ -160,9 +160,47 @@ A `TokenProvider` interface yields a valid bearer per request.
 | Mode | Setup | Refresh | At rest |
 |---|---|---|---|
 | `token` (PAT, default) | `OURA_TOKEN` | none | not stored; already in env or file |
-| `oauth2` | `octl auth` runs a localhost-callback flow and opens the browser | auto on 401 or expiry | access + refresh encrypted with AES-256-GCM, key from `OURA_ENCRYPTION_KEY` |
+| `oauth2` | `octl auth` runs a PKCE localhost-callback flow and opens the browser | proactive on expiry (5-min buffer) | refresh token in a pluggable `TokenStore`, never in `config.toml` |
 
-Only OAuth2 persists a token (the refresh token), and only that is encrypted at rest. The PAT is not copied into storage; it already lives in env or the config file, so a stored duplicate would only widen exposure. Token files are written `0600`.
+Only OAuth2 persists a token (the refresh token). The PAT is not copied into storage; it already lives in env or the config file, so a stored duplicate would only widen exposure.
+
+## OAuth2 flow (v1.1)
+
+Oura uses the authorization-code grant exclusively (no `client_credentials` for user data, confirmed against the current docs), so a human must consent in a browser once. `client_id` + `client_secret` alone cannot mint a token. The flow, modeled on the proven `~/dev/sync-tools/scripts/oura_auth.py` and hardened with encryption:
+
+```
+octl auth (oauth2):
+  1. PKCE: verifier = base64url(32 rand bytes); challenge = base64url(sha256(verifier)), S256
+  2. open browser -> https://cloud.ouraring.com/oauth/authorize
+       ?response_type=code&client_id&redirect_uri&scope&state&code_challenge&code_challenge_method=S256
+  3. one-shot localhost server on redirect_uri (default http://localhost:8182/callback) catches ?code, verifies state
+  4. POST https://api.ouraring.com/oauth/token
+       grant_type=authorization_code, code, redirect_uri, client_id, client_secret, code_verifier
+     -> { access_token, refresh_token, expires_in }; compute Expiry = now + expires_in
+  5. TokenStore.Save(tokens)
+
+sync/export (oauth2): TokenStore.Load -> OAuthProvider.Token refreshes proactively (now+5min >= Expiry):
+  POST .../oauth/token grant_type=refresh_token, refresh_token, client_id, client_secret
+  -> new tokens; on Oura's refresh-token rotation, fall back to the prior refresh token if the response omits it
+  -> TokenStore.Save(rotated)
+```
+
+### TokenStore backends
+
+The refresh token never lands in `config.toml`; it lives only in the selected backend. Selected by `[storage] token_backend` (`file` default, or `keychain`), overridable by `--token-backend` / `OURA_TOKEN_BACKEND`.
+
+```
+TokenStore interface { Load() (Tokens, error); Save(Tokens) error }   // ErrNoTokens when absent
+  FileStore     AES-256-GCM at ~/.local/share/oura/tokens.enc, 0600. Key from OURA_ENCRYPTION_KEY
+                via the existing DeriveKey. Errors clearly if the key is unset (encryption is meaningless
+                with the key beside the ciphertext; the key must come from env / secrets manager / unit file).
+                This is the portable, headless-friendly default and the server-deploy path.
+  KeychainStore github.com/zalando/go-keyring (pure Go, no cgo: shells to `security` on macOS, dbus on Linux).
+                service "octl". Zero token files on disk. macOS Keychain locally; errors clearly on a headless
+                Linux box with no secret service and points the user at the file backend.
+```
+
+Choosing `file` keeps the single-static-binary, easy-server-deploy promise; `keychain` is the desktop convenience. Scope requested defaults to Oura's read set: `personal daily heartrate workout tag session spo2`; the granted scope bounds what `sync` can pull.
 
 ## Dataset registry
 
@@ -212,8 +250,9 @@ Infra: `httptest` Oura mock with sanitized real-payload fixtures; pure-Go SQLite
 ## Security
 
 - Secrets default to env; the config file may hold them but the docs do not encourage it; CLI-arg secrets are documented as least-safe.
-- OAuth2 tokens encrypted at rest (AES-256-GCM); token files `0600`.
-- The encryption key is never written into the config file by tooling.
+- The OAuth refresh token never lands in `config.toml`; it lives only in the selected `TokenStore`. `FileStore` encrypts it (AES-256-GCM, `0600`); `KeychainStore` keeps it in the OS keychain with no token file at all.
+- The encryption key (`OURA_ENCRYPTION_KEY`) is never written to disk by tooling; with the `file` backend it must come from env / secrets manager / unit file, or `octl auth` errors rather than encrypting with a key sitting beside the ciphertext.
+- PKCE (S256) protects the authorization-code exchange; `state` is verified on the callback.
 - No telemetry. The tool talks to the Oura API and the local store, nothing else.
 
 ## v1 scope boundary
