@@ -22,7 +22,7 @@ type globalFlags struct {
 
 func addGlobalFlags(cmd *cobra.Command, g *globalFlags) {
 	f := cmd.PersistentFlags()
-	f.StringVar(&g.configPath, "config", "", "config file path (default XDG ~/.config/oura/config.toml)")
+	f.StringVar(&g.configPath, "config", "", "config file path (default: XDG config dir, oura/config.toml; macOS ~/Library/Application Support, Linux ~/.config)")
 	f.StringVar(&g.overrides.Mode, "auth-mode", "", "auth mode: token or oauth2")
 	f.StringVar(&g.overrides.Token, "oura-token", "", "Oura personal access token")
 	f.StringVar(&g.overrides.ClientID, "client-id", "", "OAuth2 client id")

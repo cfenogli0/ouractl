@@ -58,7 +58,7 @@ The refresh token never lands in `config.toml`. Choose where it lives with
 
 | Backend | Where | Notes |
 |---|---|---|
-| `file` (default) | `~/.local/share/oura/tokens.enc`, AES-256-GCM, 0600 | Requires `OURA_ENCRYPTION_KEY`; the key must come from env / secrets manager, not disk. Headless-friendly, the server-deploy path. |
+| `file` (default) | `oura/tokens.enc` in the XDG data dir (macOS `~/Library/Application Support`, Linux `~/.local/share`), AES-256-GCM, argon2id-stretched key, 0600 | Requires `OURA_ENCRYPTION_KEY`; the key must come from env / secrets manager, not disk. Headless-friendly, the server-deploy path. |
 | `keychain` | OS keychain (macOS Keychain, Linux Secret Service) | No token file on disk. Desktop convenience; unavailable on a headless box with no secret service. |
 
 ## Use
@@ -81,7 +81,8 @@ record.
 
 ## Config
 
-TOML at `~/.config/oura/config.toml` (XDG). Datasets are opt-in: the default set
+TOML at `oura/config.toml` in the XDG config dir: `~/Library/Application Support`
+on macOS, `~/.config` on Linux. Datasets are opt-in: the default set
 is `daily_sleep`, `sleep`, `daily_readiness`, `daily_activity`. Enable more under
 `[collection] enabled`.
 
