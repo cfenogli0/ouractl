@@ -72,6 +72,7 @@ func NewRootCmd(version string) *cobra.Command {
 		newBackfillCmd(g),
 		newExportCmd(g),
 		newSkillCmd(),
+		newMcpCmd(g, version),
 	)
 	return root
 }

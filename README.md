@@ -102,7 +102,33 @@ about your Oura data conversationally without an MCP server. Install it:
 Then restart Claude Code. Re-run after upgrading the binary (`--force`) to keep
 the skill in sync.
 
+## MCP server
+
+`octl mcp` serves the local store over MCP (stdio). Unlike live-proxy Oura MCP
+servers, answers come from the synced longitudinal record: offline, no
+per-question API calls. Three tools: `query` (rows from a dataset over a date
+range, optional field projection, 200-row cap with a loud over-limit error),
+`status` (per-dataset freshness), `sync` (on-demand pull; spends Oura API
+budget).
+
+Claude Desktop (`claude_desktop_config.json`):
+
+    {
+      "mcpServers": {
+        "oura": { "command": "octl", "args": ["mcp"] }
+      }
+    }
+
+Claude Code:
+
+    claude mcp add oura -- octl mcp
+
+`query` and `status` work with no auth configured; only the `sync` tool needs
+it. With the `keychain` token backend, the spawning app must use the same
+`octl` binary path you authenticated with, or macOS re-prompts for keychain
+access.
+
 ## Scope
 
-Ships the CLI, both auth modes (PAT and OAuth2), and an installable Claude Code
-skill. The MCP server and the intraday heart-rate dataset are fast-follow.
+Ships the CLI, both auth modes (PAT and OAuth2), an installable Claude Code
+skill, and the stdio MCP server. The intraday heart-rate dataset is fast-follow.
