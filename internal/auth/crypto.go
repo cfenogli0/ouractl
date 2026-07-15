@@ -7,12 +7,34 @@ import (
 	"crypto/sha256"
 	"fmt"
 	"io"
+
+	"golang.org/x/crypto/argon2"
 )
 
 // DeriveKey turns any-length user key material into a 32-byte AES-256 key.
+// SHA-256 only: retained to read pre-argon2 token files (see FileStore.Load);
+// new files derive with DeriveKeyArgon2.
 func DeriveKey(material string) []byte {
 	sum := sha256.Sum256([]byte(material))
 	return sum[:]
+}
+
+// Argon2id parameters written into new token files (RFC 9106 second
+// recommended option, time raised to 3: sync is not latency-sensitive and the
+// file guards a long-lived refresh token).
+const (
+	argonTime      = 3
+	argonMemoryKiB = 64 * 1024
+	argonThreads   = 4
+	argonSaltLen   = 16
+)
+
+// DeriveKeyArgon2 stretches user key material into a 32-byte AES-256 key.
+// Memory-hard, so a low-entropy passphrase resists offline brute force in a
+// way DeriveKey's bare SHA-256 does not. Parameters ride with the ciphertext
+// so they can be raised later without breaking existing files.
+func DeriveKeyArgon2(material string, salt []byte, time, memoryKiB uint32, threads uint8) []byte {
+	return argon2.IDKey([]byte(material), salt, time, memoryKiB, threads, 32)
 }
 
 // Encrypt seals plaintext with AES-256-GCM; nonce is prepended to the output.

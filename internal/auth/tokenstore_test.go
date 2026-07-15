@@ -11,8 +11,7 @@ import (
 func TestFileStoreRoundTripEncrypted(t *testing.T) {
 	dir := t.TempDir()
 	path := filepath.Join(dir, "tokens.enc")
-	key := DeriveKey("unit-test-key")
-	s := NewFileStore(path, key)
+	s := NewFileStore(path, "unit-test-key")
 
 	want := Tokens{AccessToken: "a", RefreshToken: "r", Expiry: time.Unix(1000, 0).UTC()}
 	if err := s.Save(want); err != nil {
@@ -40,9 +39,82 @@ func TestFileStoreRoundTripEncrypted(t *testing.T) {
 }
 
 func TestFileStoreLoadMissingIsErrNoTokens(t *testing.T) {
-	s := NewFileStore(filepath.Join(t.TempDir(), "absent.enc"), DeriveKey("k"))
+	s := NewFileStore(filepath.Join(t.TempDir(), "absent.enc"), "k")
 	if _, err := s.Load(); !errors.Is(err, ErrNoTokens) {
 		t.Fatalf("missing file err = %v, want ErrNoTokens", err)
+	}
+}
+
+func TestFileStoreWritesArgon2Format(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "tokens.enc")
+	s := NewFileStore(path, "passphrase")
+	if err := s.Save(Tokens{AccessToken: "a"}); err != nil {
+		t.Fatalf("Save: %v", err)
+	}
+	raw, _ := os.ReadFile(path)
+	if len(raw) < len(fileMagicV2) || string(raw[:len(fileMagicV2)]) != fileMagicV2 {
+		t.Fatalf("saved file lacks v2 magic, starts with %q", raw[:8])
+	}
+}
+
+func TestFileStoreWrongPassphraseFails(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "tokens.enc")
+	if err := NewFileStore(path, "right").Save(Tokens{AccessToken: "a"}); err != nil {
+		t.Fatalf("Save: %v", err)
+	}
+	if _, err := NewFileStore(path, "wrong").Load(); err == nil {
+		t.Fatal("wrong passphrase must fail to load")
+	}
+}
+
+func TestFileStoreReadsLegacySHA256AndUpgrades(t *testing.T) {
+	// A pre-argon2 token file: AES-GCM under a bare SHA-256 key, no header.
+	path := filepath.Join(t.TempDir(), "tokens.enc")
+	legacy, err := Encrypt(DeriveKey("passphrase"), []byte(`{"access_token":"old","refresh_token":"r"}`))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(path, legacy, 0o600); err != nil {
+		t.Fatal(err)
+	}
+
+	s := NewFileStore(path, "passphrase")
+	got, err := s.Load()
+	if err != nil {
+		t.Fatalf("legacy Load: %v", err)
+	}
+	if got.AccessToken != "old" {
+		t.Fatalf("legacy tokens = %+v", got)
+	}
+
+	// The next Save must upgrade the file to the argon2 format.
+	if err := s.Save(got); err != nil {
+		t.Fatalf("upgrade Save: %v", err)
+	}
+	raw, _ := os.ReadFile(path)
+	if string(raw[:len(fileMagicV2)]) != fileMagicV2 {
+		t.Fatal("Save did not upgrade legacy file to v2 format")
+	}
+	if _, err := s.Load(); err != nil {
+		t.Fatalf("Load after upgrade: %v", err)
+	}
+}
+
+func TestFileStoreSaltVariesPerSave(t *testing.T) {
+	// Fresh salt each Save: identical plaintext must not produce identical files.
+	dir := t.TempDir()
+	p1, p2 := filepath.Join(dir, "a.enc"), filepath.Join(dir, "b.enc")
+	tok := Tokens{AccessToken: "same"}
+	if err := NewFileStore(p1, "k").Save(tok); err != nil {
+		t.Fatal(err)
+	}
+	if err := NewFileStore(p2, "k").Save(tok); err != nil {
+		t.Fatal(err)
+	}
+	r1, _ := os.ReadFile(p1)
+	r2, _ := os.ReadFile(p2)
+	if string(r1) == string(r2) {
+		t.Fatal("two saves produced identical ciphertext (salt or nonce reuse)")
 	}
 }
 
