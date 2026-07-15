@@ -81,3 +81,16 @@ func TestPersistAuthSettingsExcludesSecrets(t *testing.T) {
 		t.Fatalf("reloaded config not sticky: %+v", reloaded)
 	}
 }
+
+func TestMcpCommandRegistered(t *testing.T) {
+	root := NewRootCmd("test")
+	for _, c := range root.Commands() {
+		if c.Name() == "mcp" {
+			if c.Short == "" {
+				t.Error("mcp command has no short description")
+			}
+			return
+		}
+	}
+	t.Error("mcp command not registered")
+}
