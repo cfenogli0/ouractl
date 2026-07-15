@@ -123,4 +123,101 @@ func TestReadToolsNeverTouchAuth(t *testing.T) {
 	if _, isErr := callText(t, cs, "status", nil); isErr {
 		t.Fatal("status errored")
 	}
+	if _, isErr := callText(t, cs, "query", map[string]any{
+		"dataset": "daily_sleep", "from": "2026-07-01", "to": "2026-07-02",
+	}); isErr {
+		t.Fatal("query errored")
+	}
+}
+
+func TestQueryTool(t *testing.T) {
+	cs := newTestSession(t, testDeps(t, seedStore(t)))
+	text, isErr := callText(t, cs, "query", map[string]any{
+		"dataset": "daily_sleep", "from": "2026-07-01", "to": "2026-07-02",
+	})
+	if isErr {
+		t.Fatalf("query errored: %s", text)
+	}
+	var rows []map[string]any
+	if err := json.Unmarshal([]byte(text), &rows); err != nil {
+		t.Fatalf("query output not JSON: %v\n%s", err, text)
+	}
+	if len(rows) != 2 || rows[0]["score"] != float64(80) {
+		t.Errorf("unexpected rows: %v", rows)
+	}
+}
+
+func TestQueryFieldProjection(t *testing.T) {
+	cs := newTestSession(t, testDeps(t, seedStore(t)))
+	text, _ := callText(t, cs, "query", map[string]any{
+		"dataset": "daily_sleep", "from": "2026-07-01", "to": "2026-07-02",
+		"fields": []string{"day"},
+	})
+	var rows []map[string]any
+	if err := json.Unmarshal([]byte(text), &rows); err != nil {
+		t.Fatal(err)
+	}
+	if _, hasScore := rows[0]["score"]; hasScore {
+		t.Errorf("projection leaked score: %v", rows[0])
+	}
+	if rows[0]["day"] != "2026-07-01" {
+		t.Errorf("projection dropped day: %v", rows[0])
+	}
+}
+
+func TestQueryRowCap(t *testing.T) {
+	s := seedStore(t)
+	cs := newTestSession(t, testDeps(t, s))
+	// limit 2 passes (exactly at cap), limit 1 errors and names the count.
+	if text, isErr := callText(t, cs, "query", map[string]any{
+		"dataset": "daily_sleep", "from": "2026-07-01", "to": "2026-07-02", "limit": 2,
+	}); isErr {
+		t.Fatalf("at-cap query errored: %s", text)
+	}
+	text, isErr := callText(t, cs, "query", map[string]any{
+		"dataset": "daily_sleep", "from": "2026-07-01", "to": "2026-07-02", "limit": 1,
+	})
+	if !isErr {
+		t.Fatal("over-cap query did not error")
+	}
+	if !strings.Contains(text, "2 rows") || !strings.Contains(text, "limit") {
+		t.Errorf("cap error should name count and limit: %s", text)
+	}
+}
+
+func TestQueryErrors(t *testing.T) {
+	cs := newTestSession(t, testDeps(t, seedStore(t)))
+
+	text, isErr := callText(t, cs, "query", map[string]any{
+		"dataset": "nope", "from": "2026-07-01", "to": "2026-07-02",
+	})
+	if !isErr || !strings.Contains(text, "daily_sleep") {
+		t.Errorf("unknown dataset should error listing valid names: err=%v %s", isErr, text)
+	}
+
+	text, isErr = callText(t, cs, "query", map[string]any{
+		"dataset": "daily_sleep", "from": "07/01/2026", "to": "2026-07-02",
+	})
+	if !isErr || !strings.Contains(text, "YYYY-MM-DD") {
+		t.Errorf("bad date should error with format hint: err=%v %s", isErr, text)
+	}
+
+	// daily_readiness is registered but never synced in the seed store.
+	text, isErr = callText(t, cs, "query", map[string]any{
+		"dataset": "daily_readiness", "from": "2026-07-01", "to": "2026-07-02",
+	})
+	if !isErr || !strings.Contains(text, "never") {
+		t.Errorf("never-synced dataset should say so and point at sync: err=%v %s", isErr, text)
+	}
+
+	// Known dataset, synced, but empty range: legit empty result, not an error.
+	text, isErr = callText(t, cs, "query", map[string]any{
+		"dataset": "daily_sleep", "from": "2020-01-01", "to": "2020-01-02",
+	})
+	if isErr {
+		t.Errorf("empty range errored: %s", text)
+	}
+	if strings.TrimSpace(text) != "[]" {
+		t.Errorf("empty range should return [], got %q", text)
+	}
 }
