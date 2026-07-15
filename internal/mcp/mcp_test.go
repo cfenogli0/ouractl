@@ -185,6 +185,66 @@ func TestQueryRowCap(t *testing.T) {
 	}
 }
 
+// fakeFetcher returns one fixed record per Fetch call.
+type fakeFetcher struct{ calls int }
+
+func (f *fakeFetcher) Fetch(ctx context.Context, endpoint, start, end string) ([]map[string]any, error) {
+	f.calls++
+	return []map[string]any{{"id": "new-1", "day": "2026-07-03", "score": 90}}, nil
+}
+
+func TestSyncTool(t *testing.T) {
+	s := seedStore(t)
+	fake := &fakeFetcher{}
+	d := testDeps(t, s)
+	d.FetcherFactory = func() (syncpkg.Fetcher, error) { return fake, nil }
+	cs := newTestSession(t, d)
+
+	text, isErr := callText(t, cs, "sync", nil)
+	if isErr {
+		t.Fatalf("sync errored: %s", text)
+	}
+	if fake.calls != 1 {
+		t.Errorf("want 1 fetch (1 enabled dataset), got %d", fake.calls)
+	}
+	var rows []map[string]any
+	if err := json.Unmarshal([]byte(text), &rows); err != nil {
+		t.Fatalf("sync output not JSON: %v\n%s", err, text)
+	}
+	if len(rows) != 1 {
+		t.Fatalf("want 1 result row, got %d", len(rows))
+	}
+	r := rows[0]
+	if r["dataset"] != "daily_sleep" || r["rows_added"] != float64(1) ||
+		r["total_rows"] != float64(3) || r["last_synced_day"] != "2026-07-03" {
+		t.Errorf("unexpected sync row: %v", r)
+	}
+}
+
+func TestSyncToolDatasetSubsetUnknown(t *testing.T) {
+	d := testDeps(t, seedStore(t))
+	d.FetcherFactory = func() (syncpkg.Fetcher, error) { return &fakeFetcher{}, nil }
+	cs := newTestSession(t, d)
+	text, isErr := callText(t, cs, "sync", map[string]any{"datasets": []string{"nope"}})
+	if !isErr || !strings.Contains(text, "unknown dataset") {
+		t.Errorf("unknown dataset subset should error: err=%v %s", isErr, text)
+	}
+}
+
+func TestSyncToolAuthFailureIsToolError(t *testing.T) {
+	d := testDeps(t, seedStore(t))
+	d.FetcherFactory = func() (syncpkg.Fetcher, error) { return nil, errors.New("keychain locked") }
+	cs := newTestSession(t, d)
+	text, isErr := callText(t, cs, "sync", nil)
+	if !isErr || !strings.Contains(text, "keychain locked") {
+		t.Errorf("auth failure should surface as tool error: err=%v %s", isErr, text)
+	}
+	// Server must keep serving after the failure.
+	if _, isErr := callText(t, cs, "status", nil); isErr {
+		t.Error("status broken after sync auth failure")
+	}
+}
+
 func TestQueryErrors(t *testing.T) {
 	cs := newTestSession(t, testDeps(t, seedStore(t)))
 

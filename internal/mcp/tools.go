@@ -9,6 +9,8 @@ import (
 
 	"github.com/cfenogli0/ouractl/internal/datasets"
 	"github.com/cfenogli0/ouractl/internal/export"
+	"github.com/cfenogli0/ouractl/internal/store"
+	syncpkg "github.com/cfenogli0/ouractl/internal/sync"
 	sdk "github.com/modelcontextprotocol/go-sdk/mcp"
 )
 
@@ -29,6 +31,91 @@ func textResult(s string) *sdk.CallToolResult {
 func registerTools(server *sdk.Server, d Deps) {
 	registerQuery(server, d)
 	registerStatus(server, d)
+	registerSync(server, d)
+}
+
+type syncIn struct {
+	Datasets []string `json:"datasets,omitempty" jsonschema:"datasets to sync; omit for the configured enabled set"`
+	Days     int      `json:"days,omitempty" jsonschema:"backfill the last N days instead of incremental-from-watermark"`
+}
+
+type syncRow struct {
+	Dataset       string `json:"dataset"`
+	RowsAdded     int    `json:"rows_added"`
+	TotalRows     int    `json:"total_rows"`
+	LastSyncedDay string `json:"last_synced_day"`
+}
+
+func statsByDataset(s *store.Store) (map[string]store.DatasetStat, error) {
+	stats, err := s.Stats()
+	if err != nil {
+		return nil, err
+	}
+	m := make(map[string]store.DatasetStat, len(stats))
+	for _, st := range stats {
+		m[st.Dataset] = st
+	}
+	return m, nil
+}
+
+func registerSync(server *sdk.Server, d Deps) {
+	desc := "Fetch fresh data from the Oura API into the local store. Spends real API " +
+		"rate-limit budget; use when status shows stale data, not before every query. " +
+		"Returns per-dataset rows_added (new rows this run), total_rows, last_synced_day."
+	sdk.AddTool(server, &sdk.Tool{Name: "sync", Description: desc},
+		func(ctx context.Context, req *sdk.CallToolRequest, in syncIn) (*sdk.CallToolResult, any, error) {
+			sets := d.Enabled
+			if len(in.Datasets) > 0 {
+				var err error
+				sets, err = namesToDatasets(in.Datasets)
+				if err != nil {
+					return toolError("%v", err), nil, nil
+				}
+			}
+			before, err := statsByDataset(d.Store)
+			if err != nil {
+				return toolError("read store stats: %v", err), nil, nil
+			}
+			fetcher, err := d.FetcherFactory()
+			if err != nil {
+				return toolError("auth: %v", err), nil, nil
+			}
+			now := d.Today()
+			opts := syncpkg.Options{End: now, Now: now, OverlapDays: d.OverlapDays, Source: "sync"}
+			if in.Days > 0 {
+				start, err := syncpkg.MinusDays(now, in.Days)
+				if err != nil {
+					return toolError("resolve days: %v", err), nil, nil
+				}
+				opts.Start = start
+				opts.Source = "backfill"
+			}
+			if err := syncpkg.Run(ctx, d.Store, fetcher, sets, opts); err != nil {
+				return toolError("sync: %v", err), nil, nil
+			}
+			after, err := statsByDataset(d.Store)
+			if err != nil {
+				return toolError("read store stats after sync: %v", err), nil, nil
+			}
+			// rows_added is a row-count diff, not an upsert count: overlap
+			// re-upserts don't change the count, new rows do; that is the
+			// "what did this sync bring in" number.
+			rows := make([]syncRow, 0, len(sets))
+			for _, ds := range sets {
+				a := after[ds.Name]
+				rows = append(rows, syncRow{
+					Dataset:       ds.Name,
+					RowsAdded:     a.Rows - before[ds.Name].Rows,
+					TotalRows:     a.Rows,
+					LastSyncedDay: a.LastSyncedDay,
+				})
+			}
+			out, err := json.Marshal(rows)
+			if err != nil {
+				return toolError("encode sync result: %v", err), nil, nil
+			}
+			return textResult(string(out)), nil, nil
+		})
 }
 
 func validDay(s string) bool {
